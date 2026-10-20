@@ -23,3 +23,10 @@ The app opens directly to Home. Use **Hoạt động** to review private lost re
 npm run lint
 npx tsc --noEmit
 ```
+
+| Resource | Link |
+|---|---|
+| Project documentation | [GitHub Wiki](https://github.com/vietnamese-can-A/bkonnect-app/wiki) |
+| Team organization | [GitHub Organization](https://github.com/vietnamese-can-A) |
+| Project planning and progress | [GitHub Project](https://github.com/orgs/vietnamese-can-A/projects/2) |
+
