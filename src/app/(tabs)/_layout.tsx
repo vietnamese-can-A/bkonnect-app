@@ -28,14 +28,14 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="create"
         options={{
-          title: 'Đăng tin',
+          title: 'Báo đồ',
           tabBarIcon: ({ color }) => <TabIcon glyph="＋" color={color} />,
         }}
       />
       <Tabs.Screen
         name="activity"
         options={{
-          title: 'Hoạt động',
+          title: 'Thông báo',
           tabBarIcon: ({ color }) => <TabIcon glyph="▤" color={color} />,
         }}
       />

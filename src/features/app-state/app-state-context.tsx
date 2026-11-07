@@ -21,12 +21,15 @@ import type {
 type AppState = {
   users: User[];
   currentUser: User;
+  isAuthenticated: boolean;
   lostReports: LostReport[];
   foundPosts: FoundPost[];
   matches: Match[];
 };
 
 type AppAction =
+  | { type: 'LOGIN'; userId: string }
+  | { type: 'LOGOUT' }
   | { type: 'SWITCH_USER'; userId: string }
   | { type: 'ADD_LOST_REPORT'; report: LostReport; matches: Match[] }
   | { type: 'ADD_FOUND_POST'; post: FoundPost; matches: Match[] }
@@ -35,6 +38,9 @@ type AppAction =
   | { type: 'COMPLETE_MATCH'; matchId: string };
 
 type AppStateContextValue = AppState & {
+  /** Mock login: khớp MSSV hoặc email HCMUT, mật khẩu chỉ cần không rỗng. */
+  login: (identifier: string, password: string) => boolean;
+  logout: () => void;
   switchUser: (userId: string) => void;
   createLostReport: (input: NewLostReportInput) => CreateResult;
   createFoundPost: (input: NewFoundPostInput) => CreateResult;
@@ -47,6 +53,7 @@ type AppStateContextValue = AppState & {
 const initialState: AppState = {
   users: seedUsers,
   currentUser,
+  isAuthenticated: false,
   lostReports: seedLostReports,
   foundPosts: seedFoundPosts,
   matches: seedMatches,
@@ -100,6 +107,12 @@ function buildPotentialMatches(
 
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
+    case 'LOGIN': {
+      const nextUser = state.users.find((user) => user.id === action.userId);
+      return nextUser ? { ...state, currentUser: nextUser, isAuthenticated: true } : state;
+    }
+    case 'LOGOUT':
+      return { ...state, isAuthenticated: false };
     case 'SWITCH_USER': {
       const nextUser = state.users.find((user) => user.id === action.userId);
       return nextUser ? { ...state, currentUser: nextUser } : state;
@@ -177,6 +190,22 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const value = useMemo<AppStateContextValue>(
     () => ({
       ...state,
+      login: (identifier, password) => {
+        const key = identifier.trim().toLowerCase();
+        if (!key || !password) return false;
+
+        const user = state.users.find(
+          (item) =>
+            item.studentId === key ||
+            item.email.toLowerCase() === key ||
+            item.email.toLowerCase().split('@')[0] === key,
+        );
+        if (!user) return false;
+
+        dispatch({ type: 'LOGIN', userId: user.id });
+        return true;
+      },
+      logout: () => dispatch({ type: 'LOGOUT' }),
       switchUser: (userId) => dispatch({ type: 'SWITCH_USER', userId }),
       createLostReport: (input) => {
         const report: LostReport = {
