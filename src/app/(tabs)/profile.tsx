@@ -1,3 +1,4 @@
+
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -6,7 +7,7 @@ import { colors, radii, shadows } from '@/constants/theme';
 import { useAppState } from '@/features/app-state/app-state-context';
 
 export default function ProfileScreen() {
-  const { currentUser, foundPosts, lostReports, matches, switchUser, users } = useAppState();
+  const { currentUser, foundPosts, lostReports, logout, matches, switchUser, users } = useAppState();
   const myLostReports = lostReports.filter((report) => report.ownerId === currentUser.id);
   const myLostIds = new Set(myLostReports.map((report) => report.id));
   const myMatches = matches.filter((match) => myLostIds.has(match.lostReportId));
@@ -91,6 +92,12 @@ export default function ProfileScreen() {
             })}
           </View>
         </View>
+        <Pressable
+          accessibilityRole="button"
+          onPress={logout}
+          style={({ pressed }) => [styles.logoutButton, pressed && styles.accountRowPressed]}>
+          <Text style={styles.logoutText}>Đăng xuất</Text>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
@@ -156,4 +163,6 @@ const styles = StyleSheet.create({
   accountMeta: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
   accountAction: { color: colors.blueDark, fontSize: 12, fontWeight: '700' },
   accountActionActive: { color: colors.success },
+  logoutButton: { alignItems: 'center', borderColor: colors.danger, borderRadius: radii.medium, borderWidth: 1, minHeight: 46, justifyContent: 'center' },
+  logoutText: { color: colors.danger, fontSize: 14, fontWeight: '800' },
 });

@@ -1,11 +1,13 @@
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ImageBackground,
+  ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -14,17 +16,17 @@ import { AppHeader } from '@/components/app-header';
 import { FoundPostCard } from '@/components/found-post-card';
 import { colors, radii, shadows } from '@/constants/theme';
 import { useAppState } from '@/features/app-state/app-state-context';
-import type { FoundPostStatus } from '@/types/domain';
+import { apiFetch } from '@/services/apiService';
+import type { FoundPost } from '@/types/domain';
 
-const categories = [
-  'Tất cả',
-  'Máy tính',
-  'Điện tử',
-  'Giấy tờ / Thẻ',
-  'Ví & Ba lô',
-  'Chìa khóa',
-  'Sách vở',
-];
+const campusFilters = ['Tất cả cơ sở', 'Cơ sở 1', 'Cơ sở 2'];
+const typeFilters = ['Tất cả', 'Máy tính', 'Điện tử', 'Giấy tờ / Thẻ', 'Ví & Ba lô', 'Chìa khóa', 'Sách vở'];
+const RECENT_LIMIT = 5;
+
+function matchesCampus(postCampus: string, filter: string) {
+  if (filter === 'Tất cả cơ sở') return true;
+  return postCampus?.startsWith(filter);
+}
 
 export default function HomeScreen() {
   const { foundPosts } = useAppState();
@@ -33,31 +35,94 @@ export default function HomeScreen() {
 }
 
 function HomeFeed() {
-  const { currentUser, foundPosts, lostReports, matches } = useAppState();
+  const { currentUser, foundPosts: localFoundPosts, lostReports, matches } = useAppState();
   const { width } = useWindowDimensions();
-  const [category, setCategory] = useState('Tất cả');
-  const [status, setStatus] = useState<FoundPostStatus>('OPEN');
+
+  // State tìm kiếm & bộ lọc
+  const [query, setQuery] = useState('');
+  const [campus, setCampus] = useState(campusFilters[0]);
+  const [type, setType] = useState(typeFilters[0]);
+  const [showAll, setShowAll] = useState(false);
+
+  // State API
+  const [apiPosts, setApiPosts] = useState<FoundPost[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const viewportWidth = width > 0 ? width : 390;
   const contentWidth = Math.min(viewportWidth - 32, 608);
   const contentOffset = (viewportWidth - contentWidth) / 2;
+
+  // 1. GỌI API LẤY DANH SÁCH VẬT PHẨM TỪ SERVER
+  const fetchFeedPosts = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
+
+    try {
+      // Build query params
+      const params = new URLSearchParams();
+      if (campus !== 'Tất cả cơ sở') params.append('campus', campus);
+      if (type !== 'Tất cả') params.append('category', type);
+      if (query.trim()) params.append('search', query.trim());
+
+      const response = await apiFetch<{ items: FoundPost[] }>(`/items/feed?${params.toString()}`);
+
+      if (response.success && response.data?.items) {
+        setApiPosts(response.data.items);
+      } else {
+        // Nếu API chưa có dữ liệu hoặc fail, dùng fallback dữ liệu local từ AppState
+        setApiPosts(localFoundPosts);
+      }
+    } catch (err) {
+      console.error('Fetch feed error:', err);
+      setApiPosts(localFoundPosts);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [campus, type, query, localFoundPosts]);
+
+  // Gọi API mỗi khi thay đổi Filter / Search
+  useEffect(() => {
+    fetchFeedPosts();
+  }, [fetchFeedPosts]);
+
+  // Tính số lượng thông báo chưa đọc
   const myLostReportIds = new Set(
     lostReports.filter((report) => report.ownerId === currentUser.id).map((report) => report.id),
   );
   const unreadCount = matches.filter(
     (match) =>
-      match.status === 'POSSIBLE' &&
-      !match.isRead &&
-      myLostReportIds.has(match.lostReportId),
+      match.status === 'POSSIBLE' && !match.isRead && myLostReportIds.has(match.lostReportId),
   ).length;
 
-  const filteredPosts = useMemo(
-    () =>
-      foundPosts
-        .filter((post) => post.status === status)
-        .filter((post) => category === 'Tất cả' || post.category === category)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [category, foundPosts, status],
-  );
+  // 2. TỐI ƯU BỘ LỌC VÀ SẮP XẾP VẬT PHẨM (Client-side Fallback & Realtime Filter)
+  const displayPosts = apiPosts.length > 0 ? apiPosts : localFoundPosts;
+
+  const filteredPosts = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+
+    return displayPosts
+      .filter((post) => post.status === 'OPEN')
+      .filter((post) => matchesCampus(post.campus, campus))
+      .filter((post) => type === 'Tất cả' || post.category === type)
+      .filter(
+        (post) =>
+          !keyword ||
+          [post.title, post.building, post.specificLocation, post.category, post.color]
+            .join(' ')
+            .toLowerCase()
+            .includes(keyword),
+      )
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [campus, displayPosts, query, type]);
+
+  const visiblePosts = showAll ? filteredPosts : filteredPosts.slice(0, RECENT_LIMIT);
+
+  const openPost = (id: string) => router.push({ pathname: '/found/[id]', params: { id } });
 
   const headerRight = (
     <View style={styles.headerActions}>
@@ -81,116 +146,141 @@ function HomeFeed() {
   return (
     <View style={styles.screen}>
       <AppHeader right={headerRight} />
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            colors={[colors.indigo]}
+            onRefresh={() => fetchFeedPosts(true)}
+            refreshing={isRefreshing}
+            tintColor={colors.indigo}
+          />
+        }>
         <View style={[styles.content, { marginLeft: contentOffset, width: contentWidth }]}>
-        <ImageBackground
-          source={require('@/assets/images/demo/campus-hero.png')}
-          imageStyle={styles.heroImage}
-          style={styles.hero}>
-          <View style={styles.heroOverlay} />
-          <View style={styles.heroContent}>
-            <View style={styles.networkPill}>
-              <View style={styles.networkDot} />
-              <Text style={styles.networkText}>BKONNECT SAFE CAMPUS</Text>
-            </View>
-            <Text style={styles.heroTitle}>Bạn làm rơi đồ trong trường?</Text>
-            <Text style={styles.heroSubtitle}>Tạo báo mất riêng tư để BKonnect tự tìm vật phẩm phù hợp.</Text>
-            <Pressable
-              onPress={() =>
-                router.push({ pathname: '/(tabs)/create', params: { type: 'LOST' } })
-              }
-              style={styles.heroButton}>
-              <Text style={styles.heroButtonText}>＋ Báo mất đồ ngay</Text>
-            </Pressable>
+          <View style={styles.intro}>
+            <Text style={styles.title}>Tìm lại đồ thất lạc</Text>
+            <Text style={styles.subtitle}>
+              Duyệt đồ nhặt được trong trường. Báo mất của bạn luôn được giữ riêng tư.
+            </Text>
           </View>
-        </ImageBackground>
 
-        <View style={styles.privacyNote}>
-          <Text style={styles.privacyIcon}>◆</Text>
-          <Text style={styles.privacyText}>
-            Home chỉ hiển thị đồ nhặt được công khai. Báo mất của bạn luôn được giữ riêng tư.
-          </Text>
-        </View>
-
-        <View style={styles.segment}>
-          {(['OPEN', 'RETURNED'] as FoundPostStatus[]).map((item) => {
-            const active = status === item;
-            return (
-              <Pressable
-                key={item}
-                onPress={() => setStatus(item)}
-                style={[styles.segmentButton, active && styles.segmentButtonActive]}>
-                <Text style={[styles.segmentLabel, active && styles.segmentLabelActive]}>
-                  {item === 'OPEN' ? 'Đang chờ chủ' : 'Đã trao trả'}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <ScrollView
-          contentContainerStyle={styles.chips}
-          horizontal
-          showsHorizontalScrollIndicator={false}>
-          {categories.map((item) => {
-            const active = category === item;
-            return (
-              <Pressable
-                key={item}
-                onPress={() => setCategory(item)}
-                style={[styles.chip, active && styles.chipActive]}>
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>{item}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        <View style={styles.feedHeader}>
-          <View>
-            <View style={styles.feedTitleRow}>
-              <Text style={styles.feedTitle}>
-                {status === 'OPEN' ? 'Đồ nhặt được gần đây' : 'Vật phẩm đã trao trả'}
-              </Text>
-              <View style={styles.feedDot} />
-            </View>
-            <Text style={styles.feedSubtitle}>{filteredPosts.length} vật phẩm công khai</Text>
-          </View>
-          <View style={styles.sortPill}>
-            <Text style={styles.sortText}>Mới nhất</Text>
-          </View>
-        </View>
-
-        <View style={styles.list}>
-          {filteredPosts.map((post) => (
-            <FoundPostCard
-              key={post.id}
-              post={post}
-              onPress={() =>
-                router.push({ pathname: '/found/[id]', params: { id: post.id } })
-              }
+          {/* Thanh tìm kiếm */}
+          <View style={styles.searchBox}>
+            <Text style={styles.searchIcon}>⌕</Text>
+            <TextInput
+              autoCapitalize="none"
+              onChangeText={setQuery}
+              placeholder="Tìm theo tên đồ, tòa nhà, màu sắc..."
+              placeholderTextColor={colors.textSubtle}
+              returnKeyType="search"
+              style={styles.searchInput}
+              value={query}
             />
-          ))}
+            {query ? (
+              <Pressable accessibilityLabel="Xóa tìm kiếm" hitSlop={8} onPress={() => setQuery('')}>
+                <Text style={styles.clear}>✕</Text>
+              </Pressable>
+            ) : null}
+          </View>
 
-          {filteredPosts.length === 0 && (
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>Chưa có vật phẩm phù hợp</Text>
-              <Text style={styles.emptyText}>Hãy đổi bộ lọc hoặc quay lại sau.</Text>
+          {/* Chips lọc cơ sở */}
+          <ScrollView
+            contentContainerStyle={styles.chips}
+            horizontal
+            showsHorizontalScrollIndicator={false}>
+            {campusFilters.map((item) => {
+              const active = campus === item;
+              return (
+                <Pressable
+                  key={item}
+                  onPress={() => setCampus(item)}
+                  style={[styles.campusChip, active && styles.campusChipActive]}>
+                  <Text style={[styles.campusChipText, active && styles.chipTextActive]}>
+                    {item === 'Tất cả cơ sở' ? '⌖ ' : ''}
+                    {item}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          {/* Chips lọc loại đồ */}
+          <ScrollView
+            contentContainerStyle={styles.chips}
+            horizontal
+            showsHorizontalScrollIndicator={false}>
+            {typeFilters.map((item) => {
+              const active = type === item;
+              return (
+                <Pressable
+                  key={item}
+                  onPress={() => setType(item)}
+                  style={[styles.chip, active && styles.chipActive]}>
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{item}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          {/* Header danh sách */}
+          <View style={styles.feedHeader}>
+            <Text style={styles.feedTitle}>Vật phẩm gần đây</Text>
+            {filteredPosts.length > RECENT_LIMIT && (
+              <Pressable hitSlop={8} onPress={() => setShowAll((value) => !value)}>
+                <Text style={styles.seeAll}>{showAll ? 'Thu gọn' : 'Xem tất cả'}</Text>
+              </Pressable>
+            )}
+          </View>
+
+          {/* Danh sách bài đăng & Loading Indicator */}
+          {isLoading && !isRefreshing ? (
+            <View style={styles.loadingBox}>
+              <ActivityIndicator color={colors.indigo} size="large" />
+              <Text style={styles.loadingText}>Đang tải vật phẩm mới nhất...</Text>
+            </View>
+          ) : (
+            <View style={styles.list}>
+              {visiblePosts.map((post) => (
+                <View key={post.id} style={styles.postWrap}>
+                  <FoundPostCard post={post} onPress={() => openPost(post.id)} />
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => openPost(post.id)}
+                    style={({ pressed }) => [styles.claimButton, pressed && styles.pressed]}>
+                    <Text style={styles.claimText}>Nhận lại</Text>
+                  </Pressable>
+                </View>
+              ))}
+
+              {visiblePosts.length === 0 && (
+                <View style={styles.empty}>
+                  <Text style={styles.emptyTitle}>Chưa có vật phẩm phù hợp</Text>
+                  <Text style={styles.emptyText}>Hãy đổi bộ lọc hoặc quay lại sau.</Text>
+                </View>
+              )}
             </View>
           )}
         </View>
-        </View>
       </ScrollView>
+
+      {/* Nút FAB Báo nhặt đồ */}
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => router.push({ pathname: '/(tabs)/create', params: { type: 'FOUND' } })}
+        style={({ pressed }) => [styles.fab, pressed && styles.pressed]}>
+        <Text style={styles.fabIcon}>＋</Text>
+        <Text style={styles.fabText}>Báo nhặt được đồ</Text>
+      </Pressable>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { backgroundColor: colors.background, flex: 1 },
-  content: {
-    gap: 14,
-    marginTop: 16,
-    marginBottom: 28,
-  },
+  scrollContent: { paddingBottom: 96 },
+  content: { gap: 14, marginTop: 16 },
   headerActions: { alignItems: 'center', flexDirection: 'row', gap: 8 },
   notificationButton: {
     alignItems: 'center',
@@ -211,10 +301,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     height: 17,
     justifyContent: 'center',
+    minWidth: 17,
     position: 'absolute',
     right: -5,
     top: -5,
-    minWidth: 17,
   },
   notificationCountText: { color: colors.white, fontSize: 9, fontWeight: '900' },
   headerAvatar: {
@@ -226,67 +316,94 @@ const styles = StyleSheet.create({
     width: 34,
   },
   headerAvatarText: { color: colors.white, fontSize: 11, fontWeight: '800' },
-  hero: {
-    borderRadius: radii.medium,
-    height: 178,
-    justifyContent: 'flex-end',
-    overflow: 'hidden',
-    ...shadows.floating,
-  },
-  heroImage: { borderRadius: radii.medium },
-  heroOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,86,0.65)' },
-  heroContent: { alignItems: 'flex-start', gap: 7, padding: 14 },
-  networkPill: {
+  intro: { gap: 4 },
+  title: { color: colors.indigo, fontSize: 24, fontWeight: '900' },
+  subtitle: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
+  searchBox: {
     alignItems: 'center',
-    backgroundColor: 'rgba(77,171,254,0.24)',
-    borderRadius: radii.pill,
-    flexDirection: 'row',
-    gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  networkDot: { backgroundColor: '#4DABFE', borderRadius: 4, height: 6, width: 6 },
-  networkText: { color: colors.white, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
-  heroTitle: { color: colors.white, fontSize: 18, fontWeight: '800' },
-  heroSubtitle: { color: '#E0E7FF', fontSize: 11, lineHeight: 16, maxWidth: 300 },
-  heroButton: {
-    backgroundColor: '#4DABFE',
-    borderRadius: radii.small,
-    marginTop: 2,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  heroButtonText: { color: colors.white, fontSize: 14, fontWeight: '800' },
-  privacyNote: {
-    alignItems: 'center',
-    backgroundColor: colors.indigoTint,
+    backgroundColor: colors.card,
+    borderColor: colors.border,
     borderRadius: radii.medium,
+    borderWidth: 1,
     flexDirection: 'row',
-    gap: 9,
-    padding: 11,
+    gap: 8,
+    minHeight: 48,
+    paddingHorizontal: 13,
+    ...shadows.card,
   },
-  privacyIcon: { color: colors.indigo, fontSize: 13 },
-  privacyText: { color: '#454653', flex: 1, fontSize: 11, lineHeight: 16 },
-  segment: { backgroundColor: '#E2E7FF', borderRadius: radii.small, flexDirection: 'row', padding: 4 },
-  segmentButton: { alignItems: 'center', borderRadius: radii.small, flex: 1, paddingVertical: 9 },
-  segmentButtonActive: { backgroundColor: colors.indigo, ...shadows.card },
-  segmentLabel: { color: '#454653', fontSize: 13, fontWeight: '700' },
-  segmentLabelActive: { color: colors.white },
+  searchIcon: { color: colors.textMuted, fontSize: 20 },
+  searchInput: { color: colors.text, flex: 1, fontSize: 14, paddingVertical: 10 },
+  clear: { color: colors.textMuted, fontSize: 14 },
   chips: { gap: 8, paddingRight: 16 },
-  chip: { backgroundColor: colors.indigoSoft, borderRadius: radii.pill, paddingHorizontal: 14, paddingVertical: 8 },
-  chipActive: { backgroundColor: colors.indigo },
+  campusChip: {
+    backgroundColor: colors.card,
+    borderColor: colors.borderStrong,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  campusChipActive: { backgroundColor: colors.indigo, borderColor: colors.indigo },
+  campusChipText: { color: colors.text, fontSize: 12, fontWeight: '600' },
+  chip: {
+    backgroundColor: colors.indigoSoft,
+    borderRadius: radii.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  chipActive: { backgroundColor: colors.blue },
   chipText: { color: colors.text, fontSize: 12 },
   chipTextActive: { color: colors.white, fontWeight: '800' },
-  feedHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
-  feedTitleRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
+  feedHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 2,
+  },
   feedTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
-  feedDot: { backgroundColor: '#4DABFE', borderRadius: 5, height: 8, width: 8 },
-  feedSubtitle: { color: '#454653', fontSize: 11, marginTop: 2 },
-  sortPill: { backgroundColor: colors.indigoTint, borderRadius: radii.small, paddingHorizontal: 10, paddingVertical: 6 },
-  sortText: { color: colors.text, fontSize: 11, fontWeight: '700' },
-  list: { gap: 10 },
-  empty: { alignItems: 'center', backgroundColor: colors.card, borderColor: colors.border, borderRadius: radii.medium, borderWidth: 1, gap: 5, padding: 28 },
+  seeAll: { color: colors.blueDark, fontSize: 13, fontWeight: '700' },
+  list: { gap: 12 },
+  postWrap: { gap: 6 },
+  claimButton: {
+    alignItems: 'center',
+    backgroundColor: colors.indigo,
+    borderRadius: radii.medium,
+    minHeight: 40,
+    justifyContent: 'center',
+  },
+  claimText: { color: colors.white, fontSize: 13, fontWeight: '800' },
+  loadingBox: {
+    alignItems: 'center',
+    gap: 8,
+    justifyContent: 'center',
+    paddingVertical: 32,
+  },
+  loadingText: { color: colors.textMuted, fontSize: 12 },
+  empty: {
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderRadius: radii.medium,
+    borderWidth: 1,
+    gap: 5,
+    padding: 28,
+  },
   emptyTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
   emptyText: { color: colors.textMuted, fontSize: 12 },
-  pressed: { opacity: 0.72 },
+  fab: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: colors.blue,
+    borderRadius: radii.pill,
+    bottom: 16,
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    position: 'absolute',
+    ...shadows.floating,
+  },
+  fabIcon: { color: colors.white, fontSize: 18, fontWeight: '800' },
+  fabText: { color: colors.white, fontSize: 14, fontWeight: '800' },
+  pressed: { opacity: 0.8 },
 });

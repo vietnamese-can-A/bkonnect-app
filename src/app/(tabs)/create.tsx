@@ -15,6 +15,7 @@ import { AppHeader } from '@/components/app-header';
 import { FormField, FormTextInput } from '@/components/form-field';
 import { ImagePickerField } from '@/components/image-picker-field';
 import { PrimaryButton } from '@/components/primary-button';
+import { SelectField } from '@/components/select-field';
 import { colors, radii, shadows } from '@/constants/theme';
 import { useAppState } from '@/features/app-state/app-state-context';
 
@@ -30,6 +31,16 @@ const categories = [
   'Khác',
 ];
 const campuses = ['Cơ sở 1 (Lý Thường Kiệt)', 'Cơ sở 2 (Dĩ An)'];
+const buildingsByCampus: Record<string, string[]> = {
+  [campuses[0]]: ['Tòa A1', 'Tòa A2', 'Tòa A3', 'Tòa A4', 'Tòa B1', 'Tòa B4', 'Tòa C5', 'Thư viện', 'Căn tin'],
+  [campuses[1]]: ['Tòa H1', 'Tòa H2', 'Tòa H3', 'Tòa H6', 'Thư viện', 'Căn tin', 'Ký túc xá'],
+};
+const custodyOptions = [
+  'Tôi đang giữ',
+  'Đã gửi quầy bảo vệ',
+  'Để tại vị trí nhặt được',
+];
+const DESCRIPTION_LIMIT = 300;
 
 function initialDateTime() {
   const now = new Date();
@@ -61,8 +72,9 @@ export default function CreateScreen() {
   const [privateDescription, setPrivateDescription] = useState('');
   const [campus, setCampus] = useState(campuses[0]);
   const [building, setBuilding] = useState('');
+  const buildingOptions = buildingsByCampus[campus] ?? [];
   const [specificLocation, setSpecificLocation] = useState('');
-  const [custody, setCustody] = useState('');
+  const [custody, setCustody] = useState(custodyOptions[0]);
   const [description, setDescription] = useState('');
   const [imageUri, setImageUri] = useState<string>();
   const [error, setError] = useState('');
@@ -76,7 +88,7 @@ export default function CreateScreen() {
     setPrivateDescription('');
     setBuilding('');
     setSpecificLocation('');
-    setCustody('');
+    setCustody(custodyOptions[0]);
     setDescription('');
     setImageUri(undefined);
     setError('');
@@ -190,7 +202,10 @@ export default function CreateScreen() {
 
   return (
     <View style={styles.screen}>
-      <AppHeader title="Kết nối đồ thất lạc" subtitle="BKonnect HCMUT" />
+      <AppHeader
+        title={mode === 'FOUND' ? 'Báo nhặt được đồ' : 'Báo mất đồ'}
+        subtitle="BKonnect HCMUT"
+      />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}>
@@ -225,12 +240,12 @@ export default function CreateScreen() {
             </View>
             <View style={styles.bannerCopy}>
               <Text style={styles.bannerTitle}>
-                {mode === 'LOST' ? 'Báo mất được giữ riêng tư' : 'Bài nhặt đồ được đăng công khai'}
+                {mode === 'LOST' ? 'Báo mất được giữ riêng tư' : 'Thông tin công khai, bảo vệ chủ sở hữu'}
               </Text>
               <Text style={styles.bannerText}>
                 {mode === 'LOST'
                   ? 'Chỉ hệ thống matching sử dụng thông tin này. Báo mất không xuất hiện trên Home.'
-                  : 'Không đăng chi tiết bí mật; hãy giữ chúng để xác minh đúng chủ sở hữu.'}
+                  : 'Không đăng chi tiết bí mật (số seri, nội dung bên trong...); hãy giữ lại để xác minh đúng chủ sở hữu.'}
               </Text>
             </View>
           </View>
@@ -341,7 +356,10 @@ export default function CreateScreen() {
                       return (
                         <Pressable
                           key={item}
-                          onPress={() => setCampus(item)}
+                          onPress={() => {
+                            setCampus(item);
+                            setBuilding('');
+                          }}
                           style={[styles.campusButton, active && styles.campusButtonActive]}>
                           <Text style={[styles.campusText, active && styles.campusTextActive]}>
                             {item}
@@ -352,13 +370,15 @@ export default function CreateScreen() {
                   </View>
                 </FormField>
                 <FormField label="Tòa nhà" required>
-                  <FormTextInput
-                    onChangeText={setBuilding}
-                    placeholder="Ví dụ: Tòa H6"
+                  <SelectField
+                    onChange={setBuilding}
+                    options={buildingOptions}
+                    placeholder="Chọn tòa nhà"
+                    title="Chọn tòa nhà"
                     value={building}
                   />
                 </FormField>
-                <FormField label="Vị trí cụ thể" required>
+                <FormField label="Phòng / vị trí cụ thể" required>
                   <FormTextInput
                     onChangeText={setSpecificLocation}
                     placeholder="Ví dụ: Phòng 106, gần cửa sổ"
@@ -369,30 +389,46 @@ export default function CreateScreen() {
 
               <View style={styles.card}>
                 <FormField label="Hiện món đồ đang được giữ ở đâu?" required>
-                  <FormTextInput
-                    onChangeText={setCustody}
-                    placeholder="Ví dụ: Quầy bảo vệ cổng chính"
-                    value={custody}
-                  />
+                  <View style={styles.radioGroup}>
+                    {custodyOptions.map((item) => {
+                      const active = custody === item;
+                      return (
+                        <Pressable
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected: active }}
+                          key={item}
+                          onPress={() => setCustody(item)}
+                          style={styles.radioRow}>
+                          <View style={[styles.radio, active && styles.radioActive]}>
+                            {active && <View style={styles.radioDot} />}
+                          </View>
+                          <Text style={styles.radioText}>{item}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
                 </FormField>
                 <FormField
                   label="Mô tả công khai"
                   required
                   hint="Không nêu chi tiết bí mật dùng để xác minh chủ sở hữu.">
                   <FormTextInput
-                    maxLength={600}
+                    maxLength={DESCRIPTION_LIMIT}
                     multiline
                     onChangeText={setDescription}
                     placeholder="Mô tả tình trạng và hoàn cảnh nhặt được..."
                     value={description}
                   />
+                  <Text style={styles.counter}>
+                    {description.length}/{DESCRIPTION_LIMIT}
+                  </Text>
                 </FormField>
               </View>
             </>
           )}
 
           <PrimaryButton
-            label={mode === 'LOST' ? 'Lưu báo mất riêng tư' : 'Đăng đồ nhặt được'}
+            label={mode === 'LOST' ? 'Lưu báo mất riêng tư' : 'Đăng vật phẩm'}
             onPress={handleSubmit}
           />
           <Text style={styles.honorCode}>
@@ -444,6 +480,13 @@ const styles = StyleSheet.create({
   campusButtonActive: { backgroundColor: colors.white, ...shadows.card },
   campusText: { color: colors.textMuted, fontSize: 11, textAlign: 'center' },
   campusTextActive: { color: colors.indigo, fontWeight: '800' },
+  radioGroup: { gap: 10 },
+  radioRow: { alignItems: 'center', flexDirection: 'row', gap: 10 },
+  radio: { alignItems: 'center', borderColor: colors.borderStrong, borderRadius: 10, borderWidth: 2, height: 20, justifyContent: 'center', width: 20 },
+  radioActive: { borderColor: colors.indigo },
+  radioDot: { backgroundColor: colors.indigo, borderRadius: 5, height: 10, width: 10 },
+  radioText: { color: colors.text, fontSize: 14 },
+  counter: { alignSelf: 'flex-end', color: colors.textMuted, fontSize: 11 },
   honorCode: { color: colors.textMuted, fontSize: 10, textAlign: 'center' },
   successContent: { flexGrow: 1, justifyContent: 'center', padding: 20 },
   successCard: {
