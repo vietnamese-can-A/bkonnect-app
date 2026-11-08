@@ -1,6 +1,7 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -12,428 +13,437 @@ import {
 } from 'react-native';
 
 import { AppHeader } from '@/components/app-header';
-import { FormField, FormTextInput } from '@/components/form-field';
+import { FormTextInput } from '@/components/form-field';
 import { ImagePickerField } from '@/components/image-picker-field';
 import { PrimaryButton } from '@/components/primary-button';
 import { SelectField } from '@/components/select-field';
-import { colors, radii, shadows } from '@/constants/theme';
+import { radii } from '@/constants/theme';
 import { useAppState } from '@/features/app-state/app-state-context';
+import { apiFetch } from '@/services/apiService';
 
-type CreateMode = 'LOST' | 'FOUND';
+// BỘ MÃ MÀU CHUẨN HCMUT / BKONNECT
+const BRAND_COLORS = {
+  primary: '#003B7A',      // Xanh Navy Bách Khoa
+  primaryDark: '#002B5B',  // Xanh Navy đậm
+  primaryLight: '#EBF3FC', // Xanh nhạt nền Banner
+  textMain: '#0F172A',     // Màu chữ chính
+  textSub: '#64748B',      // Màu chữ phụ
+  bgScreen: '#F5F7FA',     // Màu nền màn hình
+  border: '#CBD5E1',       // Viền input/card
+  danger: '#DC2626',       // Màu cảnh báo/lỗi
+};
 
 const categories = [
-  'Máy tính',
   'Điện tử',
-  'Giấy tờ / Thẻ',
   'Ví & Ba lô',
+  'Giấy tờ / Thẻ',
   'Chìa khóa',
-  'Sách vở',
-  'Khác',
+  'Sách & Ghi chú',
 ];
+
+const categoryCodeMap: Record<string, string> = {
+  'Điện tử': 'EQUIPMENT',
+  'Ví & Ba lô': 'WALLET_BAG',
+  'Giấy tờ / Thẻ': 'DOCUMENT',
+  'Chìa khóa': 'OTHER',
+  'Sách & Ghi chú': 'OTHER',
+};
+
 const campuses = ['Cơ sở 1 (Lý Thường Kiệt)', 'Cơ sở 2 (Dĩ An)'];
+
+const campusCodeMap: Record<string, string> = {
+  [campuses[0]]: 'LTK',
+  [campuses[1]]: 'DA',
+};
+
 const buildingsByCampus: Record<string, string[]> = {
-  [campuses[0]]: ['Tòa A1', 'Tòa A2', 'Tòa A3', 'Tòa A4', 'Tòa B1', 'Tòa B4', 'Tòa C5', 'Thư viện', 'Căn tin'],
+  [campuses[0]]: [
+    'Tòa H6 (Khoa KH&KT Máy tính)',
+    'Tòa A1',
+    'Tòa A4',
+    'Hội trường A5',
+    'Tòa B1',
+    'Tòa B4',
+    'Tòa C5',
+    'Căn tin C6',
+    'Thư viện',
+  ],
   [campuses[1]]: ['Tòa H1', 'Tòa H2', 'Tòa H3', 'Tòa H6', 'Thư viện', 'Căn tin', 'Ký túc xá'],
 };
+
 const custodyOptions = [
-  'Tôi đang giữ',
-  'Đã gửi quầy bảo vệ',
-  'Để tại vị trí nhặt được',
+  {
+    title: 'Tôi đang tự giữ',
+    subtitle: 'Trao đổi nhận đồ trực tiếp qua trò chuyện sinh viên đã xác minh trong ứng dụng.',
+    code: 'KEEPING_BY_SELF',
+  },
+  {
+    title: 'Đã gửi tại Bàn Bảo vệ',
+    subtitle: 'Đã gửi tại phòng bảo vệ tòa nhà để sinh viên nhận lại an toàn, có giám sát.',
+    code: 'KEEPING_BY_SECURITY',
+  },
+  {
+    title: 'Đã nộp Văn phòng Đoàn - Hội',
+    subtitle: 'Văn phòng Đoàn Thanh niên / Hội Sinh viên Bách Khoa.',
+    code: 'KEEPING_BY_YOUTH_UNION',
+  },
 ];
-const DESCRIPTION_LIMIT = 300;
 
-function initialDateTime() {
-  const now = new Date();
-  const offset = now.getTimezoneOffset() * 60_000;
-  return new Date(now.getTime() - offset).toISOString().slice(0, 16);
-}
+const WORD_LIMIT = 250;
 
-function parseDateTime(value: string) {
-  const timestamp = new Date(value.trim().replace(' ', 'T'));
-  return Number.isNaN(timestamp.getTime()) ? undefined : timestamp.toISOString();
+function countWords(str: string) {
+  const trimmed = str.trim();
+  return trimmed ? trimmed.split(/\s+/).length : 0;
 }
 
 export default function CreateScreen() {
-  const params = useLocalSearchParams<{ type?: string }>();
-  const { createFoundPost, createLostReport } = useAppState();
+  const { createFoundPost } = useAppState();
   const { width } = useWindowDimensions();
+
   const viewportWidth = width > 0 ? width : 390;
   const contentWidth = Math.min(viewportWidth - 32, 608);
   const contentOffset = (viewportWidth - contentWidth) / 2;
-  const successWidth = Math.min(viewportWidth - 40, 520);
-  const [mode, setMode] = useState<CreateMode>(() =>
-    params.type === 'FOUND' ? 'FOUND' : 'LOST',
-  );
+
   const [itemName, setItemName] = useState('');
-  const [category, setCategory] = useState('Máy tính');
-  const [color, setColor] = useState('');
-  const [occurredAt, setOccurredAt] = useState(initialDateTime);
-  const [possibleLocations, setPossibleLocations] = useState('');
-  const [privateDescription, setPrivateDescription] = useState('');
+  const [category, setCategory] = useState('Điện tử');
   const [campus, setCampus] = useState(campuses[0]);
-  const [building, setBuilding] = useState('');
+  const [building, setBuilding] = useState('Tòa H6 (Khoa KH&KT Máy tính)');
   const buildingOptions = buildingsByCampus[campus] ?? [];
   const [specificLocation, setSpecificLocation] = useState('');
-  const [custody, setCustody] = useState(custodyOptions[0]);
+  const [custody, setCustody] = useState(custodyOptions[1].title);
   const [description, setDescription] = useState('');
   const [imageUri, setImageUri] = useState<string>();
+
   const [error, setError] = useState('');
-  const [lostSuccess, setLostSuccess] = useState<{ id: string; matchCount: number }>();
+  const [isLoading, setIsLoading] = useState(false);
+
+  const wordCount = countWords(description);
 
   const resetForm = () => {
     setItemName('');
-    setColor('');
-    setOccurredAt(initialDateTime());
-    setPossibleLocations('');
-    setPrivateDescription('');
-    setBuilding('');
+    setCampus(campuses[0]);
+    setBuilding(buildingsByCampus[campuses[0]][0] || '');
     setSpecificLocation('');
-    setCustody(custodyOptions[0]);
+    setCustody(custodyOptions[1].title);
     setDescription('');
     setImageUri(undefined);
     setError('');
   };
 
-  const changeMode = (nextMode: CreateMode) => {
-    setMode(nextMode);
-    setLostSuccess(undefined);
-    setError('');
+  const uploadImageToServer = async (uri: string): Promise<string | null> => {
+    try {
+      const filename = uri.split('/').pop() || 'photo.jpg';
+      const match = /\.(\w+)$/.exec(filename);
+      const type = match ? `image/${match[1]}` : 'image/jpeg';
+
+      const formData = new FormData();
+      formData.append('file', {
+        uri,
+        name: filename,
+        type,
+      } as any);
+
+      // Gọi API qua apiFetch đồng bộ toàn dự án
+      const response = await apiFetch<{ imageUrl: string }>('/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (response.success && response.data?.imageUrl) {
+        return response.data.imageUrl;
+      }
+      return null;
+    } catch (err) {
+      console.error('Image upload failed:', err);
+      return null;
+    }
   };
 
-  const handleSubmit = () => {
-    const eventTime = parseDateTime(occurredAt);
-    if (!itemName.trim() || !category || !color.trim() || !eventTime) {
-      setError('Vui lòng nhập tên, danh mục, màu sắc và ngày giờ hợp lệ.');
+  const handleSubmit = async () => {
+    if (!imageUri) {
+      setError('Vui lòng thêm ảnh đồ vật trước khi đăng.');
       return;
     }
 
-    if (mode === 'LOST') {
-      const locations = possibleLocations
-        .split(',')
-        .map((location) => location.trim())
-        .filter(Boolean);
+    if (!itemName.trim() || !category) {
+      setError('Vui lòng điền tên đồ vật và chọn danh mục.');
+      return;
+    }
 
-      if (locations.length === 0 || !privateDescription.trim()) {
-        setError('Báo mất cần ít nhất một vị trí có thể làm rơi và mô tả nhận dạng riêng tư.');
+    if (!campus.trim() || !building.trim() || !specificLocation.trim() || !custody.trim()) {
+      setError('Vui lòng điền đầy đủ vị trí và nơi giữ đồ hiện tại.');
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+
+    const eventTime = new Date().toISOString();
+
+    try {
+      let uploadedServerImageUrl: string | undefined = undefined;
+
+      if (imageUri && !imageUri.startsWith('http')) {
+        const uploadedUrl = await uploadImageToServer(imageUri);
+
+        if (!uploadedUrl) {
+          setError('Tải ảnh lên máy chủ thất bại. Vui lòng kiểm tra kết nối mạng hoặc thử lại.');
+          setIsLoading(false);
+          return;
+        }
+
+        uploadedServerImageUrl = uploadedUrl;
+      } else if (imageUri?.startsWith('http')) {
+        uploadedServerImageUrl = imageUri;
+      }
+
+      const selectedCustody = custodyOptions.find((item) => item.title === custody);
+
+      const payload = {
+        title: itemName.trim(),
+        imageUrl: uploadedServerImageUrl || '',
+        categoryCode: categoryCodeMap[category] || 'OTHER',
+        campusCode: campusCodeMap[campus] || 'LTK',
+        buildingId: building.trim(),
+        room: specificLocation.trim(),
+        holdingStatus: selectedCustody?.code || 'KEEPING_BY_SECURITY',
+        description: description.trim(),
+        color: 'Nhiều màu',
+        foundAt: eventTime,
+      };
+
+      const response = await apiFetch('/items', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.success) {
+        setError(response.message || 'Gửi bài đăng thất bại. Vui lòng thử lại.');
+        setIsLoading(false);
         return;
       }
 
-      const result = createLostReport({
-        itemName: itemName.trim(),
+      createFoundPost({
+        title: itemName.trim(),
         category,
-        color: color.trim(),
-        privateDescription: privateDescription.trim(),
-        possibleLocations: locations,
-        lostAt: eventTime,
+        color: 'Nhiều màu',
+        campus,
+        building: building.trim(),
+        specificLocation: specificLocation.trim(),
+        foundAt: eventTime,
+        custody: custody.trim(),
+        description: description.trim(),
+        imageUri: uploadedServerImageUrl || imageUri,
       });
+
       resetForm();
-      setLostSuccess(result);
-      return;
+      router.navigate('/(tabs)');
+    } catch (err) {
+      console.error('Create item submit error:', err);
+      setError('Đã xảy ra lỗi hệ thống khi đăng bài. Vui lòng thử lại sau.');
+    } finally {
+      setIsLoading(false);
     }
-
-    if (
-      !campus.trim() ||
-      !building.trim() ||
-      !specificLocation.trim() ||
-      !custody.trim() ||
-      !description.trim()
-    ) {
-      setError('Vui lòng điền đầy đủ vị trí, nơi giữ đồ và mô tả công khai.');
-      return;
-    }
-
-    createFoundPost({
-      title: itemName.trim(),
-      category,
-      color: color.trim(),
-      campus,
-      building: building.trim(),
-      specificLocation: specificLocation.trim(),
-      foundAt: eventTime,
-      custody: custody.trim(),
-      description: description.trim(),
-      imageUri,
-    });
-    resetForm();
-    router.navigate('/(tabs)');
   };
-
-  if (lostSuccess) {
-    return (
-      <View style={styles.screen}>
-        <AppHeader title="Báo mất riêng tư" subtitle="BKonnect HCMUT" />
-        <ScrollView contentContainerStyle={styles.successContent}>
-          <View style={[styles.successCard, { width: successWidth }]}>
-            <View style={styles.successIcon}>
-              <Text style={styles.successIconText}>✓</Text>
-            </View>
-            <Text style={styles.successTitle}>Đã lưu báo mất riêng tư</Text>
-            <Text style={styles.successText}>
-              Báo mất không xuất hiện trên Home và chỉ được dùng để đối chiếu với các món đồ nhặt
-              được.
-            </Text>
-            <View style={styles.matchResult}>
-              <Text style={styles.matchResultValue}>{lostSuccess.matchCount}</Text>
-              <View style={styles.matchResultCopy}>
-                <Text style={styles.matchResultTitle}>khớp tiềm năng được tìm thấy</Text>
-                <Text style={styles.matchResultText}>
-                  {lostSuccess.matchCount > 0
-                    ? 'Bạn có thông báo mới trong Trung tâm khớp.'
-                    : 'BKonnect sẽ tiếp tục đối chiếu khi có đồ mới được đăng.'}
-                </Text>
-              </View>
-            </View>
-            {lostSuccess.matchCount > 0 && (
-              <PrimaryButton label="Xem khớp tiềm năng" onPress={() => router.push('/matches')} />
-            )}
-            <PrimaryButton
-              label="Về trang chủ"
-              onPress={() => router.navigate('/(tabs)')}
-              tone="secondary"
-            />
-            <Pressable onPress={() => setLostSuccess(undefined)}>
-              <Text style={styles.createAnother}>Tạo báo cáo khác</Text>
-            </Pressable>
-          </View>
-        </ScrollView>
-      </View>
-    );
-  }
 
   return (
     <View style={styles.screen}>
-      <AppHeader
-        title={mode === 'FOUND' ? 'Báo nhặt được đồ' : 'Báo mất đồ'}
-        subtitle="BKonnect HCMUT"
-      />
+      <AppHeader title="Báo nhặt được đồ" subtitle="BKonnect HCMUT" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}>
-        <ScrollView
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
+        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={[styles.content, { marginLeft: contentOffset, width: contentWidth }]}>
-          <View style={styles.choiceIntro}>
-            <Text style={styles.choiceTitle}>Bạn muốn làm gì?</Text>
-            <Text style={styles.choiceText}>Chọn đúng tình huống để bảo vệ thông tin và tìm đồ nhanh hơn.</Text>
-          </View>
-
-          <View style={styles.typePicker}>
-            {(['LOST', 'FOUND'] as CreateMode[]).map((item) => {
-              const active = item === mode;
-              return (
-                <Pressable
-                  key={item}
-                  onPress={() => changeMode(item)}
-                  style={[styles.typeButton, active && styles.typeButtonActive]}>
-                  <Text style={[styles.typeLabel, active && styles.typeLabelActive]}>
-                    {item === 'LOST' ? 'Tôi làm mất đồ' : 'Tôi nhặt được đồ'}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <View style={[styles.banner, mode === 'LOST' ? styles.lostBanner : styles.foundBanner]}>
-            <View style={styles.bannerIcon}>
-              <Text style={styles.bannerIconText}>{mode === 'LOST' ? '◆' : '✓'}</Text>
+            
+            {/* Banner Bảo mật */}
+            <View style={styles.securityBanner}>
+              <View style={styles.securityIconBox}>
+              </View>
+              <View style={styles.securityTextWrap}>
+                <Text style={styles.securityTitle}>Giữ kín đặc điểm nhận dạng</Text>
+                <Text style={styles.securityDesc}>
+                  Không công khai mật khẩu hoặc chữ khắc riêng. Các chi tiết này dùng để xác minh chủ
+                  sở hữu.
+                </Text>
+              </View>
             </View>
-            <View style={styles.bannerCopy}>
-              <Text style={styles.bannerTitle}>
-                {mode === 'LOST' ? 'Báo mất được giữ riêng tư' : 'Thông tin công khai, bảo vệ chủ sở hữu'}
-              </Text>
-              <Text style={styles.bannerText}>
-                {mode === 'LOST'
-                  ? 'Chỉ hệ thống matching sử dụng thông tin này. Báo mất không xuất hiện trên Home.'
-                  : 'Không đăng chi tiết bí mật (số seri, nội dung bên trong...); hãy giữ lại để xác minh đúng chủ sở hữu.'}
-              </Text>
-            </View>
-          </View>
 
-          {error ? (
-            <View style={styles.errorBanner}>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          ) : null}
+            {/* Error Banner */}
+            {Boolean(error) && (
+              <View style={styles.errorBanner}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            )}
 
-          {mode === 'FOUND' && (
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>
-                Ảnh món đồ <Text style={styles.optional}>(không bắt buộc)</Text>
+            {/* 1. Ảnh đồ vật */}
+            <View style={styles.fieldBlock}>
+              <Text style={styles.fieldLabel}>
+                Ảnh đồ vật <Text style={styles.asterisk}>*</Text>
               </Text>
               <ImagePickerField imageUri={imageUri} onChange={setImageUri} />
+              {!imageUri && (
+                <Text style={styles.imageWarning}>Vui lòng thêm ảnh đồ vật trước khi đăng.</Text>
+              )}
             </View>
-          )}
 
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Thông tin nhận dạng</Text>
-            <FormField label="Tên món đồ" required>
+            {/* 2. Tên đồ vật */}
+            <View style={styles.fieldBlock}>
+              <Text style={styles.fieldLabel}>
+                Tên đồ vật <Text style={styles.asterisk}>*</Text>
+              </Text>
               <FormTextInput
+                editable={!isLoading}
                 maxLength={80}
                 onChangeText={setItemName}
-                placeholder="Ví dụ: Máy tính Casio fx-580VN X"
+                placeholder="VD: Ví da màu đen"
                 value={itemName}
               />
-            </FormField>
+            </View>
 
-            <FormField label="Danh mục" required>
-              <View style={styles.chipWrap}>
+            {/* 3. Danh mục */}
+            <View style={styles.fieldBlock}>
+              <Text style={styles.fieldLabel}>
+                Danh mục <Text style={styles.asterisk}>*</Text>
+              </Text>
+              <View style={styles.categoryChipWrap}>
                 {categories.map((item) => {
                   const active = category === item;
                   return (
                     <Pressable
+                      disabled={isLoading}
                       key={item}
                       onPress={() => setCategory(item)}
-                      style={[styles.chip, active && styles.chipActive]}>
-                      <Text style={[styles.chipText, active && styles.chipTextActive]}>{item}</Text>
+                      style={[
+                        styles.categoryChip,
+                        active && styles.categoryChipActive,
+                      ]}>
+                      <Text
+                        style={[
+                          styles.categoryChipText,
+                          active && styles.categoryChipTextActive,
+                        ]}>
+                        {item}
+                      </Text>
                     </Pressable>
                   );
                 })}
               </View>
-            </FormField>
+            </View>
 
-            <FormField label="Màu sắc" required>
+            {/* 4. Vị trí nhặt được đồ */}
+            <View style={styles.sectionBlock}>
+              <Text style={styles.sectionTitle}>
+                Vị trí nhặt được đồ <Text style={styles.asterisk}>*</Text>
+              </Text>
+
+              <View style={styles.subField}>
+                <Text style={styles.subLabel}>Vị trí cơ sở</Text>
+                <SelectField
+                  onChange={(selected) => {
+                    setCampus(selected);
+                    setBuilding(buildingsByCampus[selected]?.[0] || '');
+                  }}
+                  options={campuses}
+                  placeholder="Chọn cơ sở"
+                  title="Chọn cơ sở"
+                  value={campus}
+                />
+              </View>
+
+              <View style={styles.subField}>
+                <Text style={styles.subLabel}>Tòa nhà</Text>
+                <SelectField
+                  onChange={setBuilding}
+                  options={buildingOptions}
+                  placeholder="Chọn tòa nhà"
+                  title="Chọn tòa nhà"
+                  value={building}
+                />
+              </View>
+
+              <View style={styles.subField}>
+                <Text style={styles.subLabel}>Phòng / Khu vực cụ thể</Text>
+                <FormTextInput
+                  editable={!isLoading}
+                  onChangeText={setSpecificLocation}
+                  placeholder="VD: Bàn phòng 302, gần cửa sổ"
+                  value={specificLocation}
+                />
+              </View>
+            </View>
+
+            {/* 5. Nơi giữ đồ hiện tại */}
+            <View style={styles.sectionBlock}>
+              <Text style={styles.sectionTitle}>
+                Nơi giữ đồ hiện tại <Text style={styles.asterisk}>*</Text>
+              </Text>
+
+              <View style={styles.custodyList}>
+                {custodyOptions.map((item) => {
+                  const active = custody === item.title;
+                  return (
+                    <Pressable
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: active }}
+                      disabled={isLoading}
+                      key={item.title}
+                      onPress={() => setCustody(item.title)}
+                      style={[
+                        styles.custodyCard,
+                        active && styles.custodyCardActive,
+                      ]}>
+                      <View style={[styles.radioDot, active && styles.radioDotActive]}>
+                        {active && <View style={styles.radioDotInner} />}
+                      </View>
+                      <View style={styles.custodyTextWrap}>
+                        <Text style={[styles.custodyTitle, active && styles.custodyTitleActive]}>
+                          {item.title}
+                        </Text>
+                        <Text style={styles.custodySubtitle}>{item.subtitle}</Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* 6. Mô tả (không bắt buộc) */}
+            <View style={styles.fieldBlock}>
+              <View style={styles.labelHeaderRow}>
+                <Text style={styles.fieldLabel}>Mô tả (không bắt buộc)</Text>
+                <Text style={styles.wordCounter}>
+                  {wordCount} / {WORD_LIMIT} từ
+                </Text>
+              </View>
               <FormTextInput
-                maxLength={40}
-                onChangeText={setColor}
-                placeholder="Ví dụ: Xanh dương"
-                value={color}
+                editable={!isLoading}
+                maxLength={1000}
+                multiline
+                numberOfLines={3}
+                onChangeText={setDescription}
+                placeholder="Nhập mô tả đặc điểm nhận dạng chung (không tiết lộ chi tiết bí mật)..."
+                value={description}
               />
-            </FormField>
+            </View>
 
-            <FormField
-              label={mode === 'LOST' ? 'Ngày giờ làm mất' : 'Ngày giờ nhặt được'}
-              required
-              hint="Định dạng: YYYY-MM-DDTHH:mm">
-              <FormTextInput
-                autoCapitalize="none"
-                onChangeText={setOccurredAt}
-                placeholder="2026-09-29T09:30"
-                value={occurredAt}
+            {/* Nút gửi form */}
+            <View style={styles.submitSection}>
+              <PrimaryButton
+                disabled={isLoading}
+                icon={
+                  isLoading ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : null
+                }
+                label={isLoading ? 'Đang xử lý...' : 'Đăng bài nhặt đồ'}
+                onPress={handleSubmit}
+                style={styles.submitBtn}
               />
-            </FormField>
-          </View>
+              <Text style={styles.honorNotice}>
+                Khi đăng bài, bạn đồng ý với Quy tắc Danh dự Sinh viên HCMUT
+              </Text>
+            </View>
 
-          {mode === 'LOST' ? (
-            <>
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>Vị trí có thể làm rơi</Text>
-                <FormField
-                  label="Các khu vực có thể"
-                  required
-                  hint="Phân cách nhiều vị trí bằng dấu phẩy.">
-                  <FormTextInput
-                    onChangeText={setPossibleLocations}
-                    placeholder="Ví dụ: Tòa H6, Cơ sở 2, tuyến xe buýt 50"
-                    value={possibleLocations}
-                  />
-                </FormField>
-              </View>
-
-              <View style={styles.card}>
-                <FormField
-                  label="Mô tả riêng tư / đặc điểm phân biệt"
-                  required
-                  hint="Thông tin này không công khai và chỉ dùng để xác minh.">
-                  <FormTextInput
-                    maxLength={600}
-                    multiline
-                    onChangeText={setPrivateDescription}
-                    placeholder="Nhãn tên, vết xước, vật bên trong hoặc đặc điểm chỉ bạn biết..."
-                    value={privateDescription}
-                  />
-                </FormField>
-              </View>
-            </>
-          ) : (
-            <>
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>⌖ Vị trí nhặt được</Text>
-                <FormField label="Cơ sở" required>
-                  <View style={styles.campusOptions}>
-                    {campuses.map((item) => {
-                      const active = campus === item;
-                      return (
-                        <Pressable
-                          key={item}
-                          onPress={() => {
-                            setCampus(item);
-                            setBuilding('');
-                          }}
-                          style={[styles.campusButton, active && styles.campusButtonActive]}>
-                          <Text style={[styles.campusText, active && styles.campusTextActive]}>
-                            {item}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </FormField>
-                <FormField label="Tòa nhà" required>
-                  <SelectField
-                    onChange={setBuilding}
-                    options={buildingOptions}
-                    placeholder="Chọn tòa nhà"
-                    title="Chọn tòa nhà"
-                    value={building}
-                  />
-                </FormField>
-                <FormField label="Phòng / vị trí cụ thể" required>
-                  <FormTextInput
-                    onChangeText={setSpecificLocation}
-                    placeholder="Ví dụ: Phòng 106, gần cửa sổ"
-                    value={specificLocation}
-                  />
-                </FormField>
-              </View>
-
-              <View style={styles.card}>
-                <FormField label="Hiện món đồ đang được giữ ở đâu?" required>
-                  <View style={styles.radioGroup}>
-                    {custodyOptions.map((item) => {
-                      const active = custody === item;
-                      return (
-                        <Pressable
-                          accessibilityRole="radio"
-                          accessibilityState={{ selected: active }}
-                          key={item}
-                          onPress={() => setCustody(item)}
-                          style={styles.radioRow}>
-                          <View style={[styles.radio, active && styles.radioActive]}>
-                            {active && <View style={styles.radioDot} />}
-                          </View>
-                          <Text style={styles.radioText}>{item}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </FormField>
-                <FormField
-                  label="Mô tả công khai"
-                  required
-                  hint="Không nêu chi tiết bí mật dùng để xác minh chủ sở hữu.">
-                  <FormTextInput
-                    maxLength={DESCRIPTION_LIMIT}
-                    multiline
-                    onChangeText={setDescription}
-                    placeholder="Mô tả tình trạng và hoàn cảnh nhặt được..."
-                    value={description}
-                  />
-                  <Text style={styles.counter}>
-                    {description.length}/{DESCRIPTION_LIMIT}
-                  </Text>
-                </FormField>
-              </View>
-            </>
-          )}
-
-          <PrimaryButton
-            label={mode === 'LOST' ? 'Lưu báo mất riêng tư' : 'Đăng vật phẩm'}
-            onPress={handleSubmit}
-          />
-          <Text style={styles.honorCode}>
-            Bằng việc gửi thông tin, bạn đồng ý với Quy tắc Danh dự HCMUT.
-          </Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -443,70 +453,195 @@ export default function CreateScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  screen: { backgroundColor: colors.backgroundCool, flex: 1 },
+  screen: { backgroundColor: BRAND_COLORS.bgScreen, flex: 1 },
   content: {
-    gap: 14,
-    marginTop: 16,
+    gap: 18,
+    marginTop: 12,
     marginBottom: 32,
   },
-  choiceIntro: { gap: 3 },
-  choiceTitle: { color: colors.text, fontSize: 19, fontWeight: '800' },
-  choiceText: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
-  typePicker: { backgroundColor: '#E2E7FF', borderRadius: radii.small, flexDirection: 'row', padding: 4 },
-  typeButton: { alignItems: 'center', borderRadius: radii.small, flex: 1, padding: 10 },
-  typeButtonActive: { backgroundColor: colors.indigo },
-  typeLabel: { color: colors.textMuted, fontSize: 13, fontWeight: '700' },
-  typeLabelActive: { color: colors.white },
-  banner: { borderRadius: radii.medium, borderWidth: 1, flexDirection: 'row', gap: 10, padding: 13 },
-  lostBanner: { backgroundColor: '#F0F5FF', borderColor: '#BFDBFE' },
-  foundBanner: { backgroundColor: colors.blueSoft, borderColor: '#BFDBFE' },
-  bannerIcon: { alignItems: 'center', backgroundColor: colors.indigo, borderRadius: 12, height: 32, justifyContent: 'center', width: 32 },
-  bannerIconText: { color: colors.white, fontWeight: '900' },
-  bannerCopy: { flex: 1, gap: 3 },
-  bannerTitle: { color: colors.indigo, fontSize: 14, fontWeight: '800' },
-  bannerText: { color: '#475569', fontSize: 12, lineHeight: 18 },
-  errorBanner: { backgroundColor: colors.dangerSoft, borderColor: '#FECDD3', borderRadius: radii.medium, borderWidth: 1, padding: 12 },
-  errorText: { color: colors.danger, fontSize: 12, fontWeight: '700', lineHeight: 18 },
-  card: { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radii.medium, borderWidth: 1, gap: 14, padding: 16, ...shadows.card },
-  cardTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
-  optional: { color: colors.textMuted, fontSize: 12, fontWeight: '500' },
-  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { backgroundColor: '#F1F5F9', borderRadius: radii.pill, paddingHorizontal: 12, paddingVertical: 7 },
-  chipActive: { backgroundColor: colors.indigo },
-  chipText: { color: '#334155', fontSize: 12 },
-  chipTextActive: { color: colors.white, fontWeight: '700' },
-  campusOptions: { backgroundColor: '#F1F5F9', borderRadius: radii.small, flexDirection: 'row', padding: 4 },
-  campusButton: { alignItems: 'center', borderRadius: 4, flex: 1, justifyContent: 'center', minHeight: 54, padding: 8 },
-  campusButtonActive: { backgroundColor: colors.white, ...shadows.card },
-  campusText: { color: colors.textMuted, fontSize: 11, textAlign: 'center' },
-  campusTextActive: { color: colors.indigo, fontWeight: '800' },
-  radioGroup: { gap: 10 },
-  radioRow: { alignItems: 'center', flexDirection: 'row', gap: 10 },
-  radio: { alignItems: 'center', borderColor: colors.borderStrong, borderRadius: 10, borderWidth: 2, height: 20, justifyContent: 'center', width: 20 },
-  radioActive: { borderColor: colors.indigo },
-  radioDot: { backgroundColor: colors.indigo, borderRadius: 5, height: 10, width: 10 },
-  radioText: { color: colors.text, fontSize: 14 },
-  counter: { alignSelf: 'flex-end', color: colors.textMuted, fontSize: 11 },
-  honorCode: { color: colors.textMuted, fontSize: 10, textAlign: 'center' },
-  successContent: { flexGrow: 1, justifyContent: 'center', padding: 20 },
-  successCard: {
-    alignItems: 'center',
-    backgroundColor: colors.card,
-    borderColor: colors.border,
-    borderRadius: radii.large,
-    borderWidth: 1,
-    gap: 14,
-    padding: 24,
-    ...shadows.floating,
+  securityBanner: {
+    backgroundColor: BRAND_COLORS.primaryLight,
+    borderRadius: 12,
+    padding: 14,
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-start',
   },
-  successIcon: { alignItems: 'center', backgroundColor: colors.success, borderRadius: 34, height: 68, justifyContent: 'center', width: 68 },
-  successIconText: { color: colors.white, fontSize: 28, fontWeight: '900' },
-  successTitle: { color: colors.text, fontSize: 21, fontWeight: '900', textAlign: 'center' },
-  successText: { color: colors.textMuted, fontSize: 13, lineHeight: 20, textAlign: 'center' },
-  matchResult: { alignItems: 'center', backgroundColor: colors.indigoTint, borderRadius: radii.medium, flexDirection: 'row', gap: 12, padding: 14, width: '100%' },
-  matchResultValue: { color: colors.indigo, fontSize: 31, fontWeight: '900' },
-  matchResultCopy: { flex: 1 },
-  matchResultTitle: { color: colors.text, fontSize: 13, fontWeight: '800' },
-  matchResultText: { color: colors.textMuted, fontSize: 11, lineHeight: 16, marginTop: 2 },
-  createAnother: { color: colors.blueDark, fontSize: 13, fontWeight: '700', padding: 8 },
+  securityIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: BRAND_COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  securityIconInner: {
+    width: 14,
+    height: 14,
+    borderRadius: 3,
+    backgroundColor: '#FFFFFF',
+  },
+  securityTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  securityTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: BRAND_COLORS.primary,
+  },
+  securityDesc: {
+    fontSize: 12,
+    color: BRAND_COLORS.textSub,
+    lineHeight: 17,
+  },
+  errorBanner: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECDD3',
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 12,
+  },
+  errorText: {
+    color: BRAND_COLORS.danger,
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  fieldBlock: {
+    gap: 6,
+  },
+  fieldLabel: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: BRAND_COLORS.textMain,
+  },
+  asterisk: {
+    color: BRAND_COLORS.danger,
+  },
+  imageWarning: {
+    color: BRAND_COLORS.danger,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  categoryChipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  categoryChip: {
+    backgroundColor: '#FFFFFF',
+    borderColor: BRAND_COLORS.border,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  categoryChipActive: {
+    backgroundColor: BRAND_COLORS.primary,
+    borderColor: BRAND_COLORS.primary,
+  },
+  categoryChipText: {
+    color: '#334155',
+    fontSize: 12.5,
+    fontWeight: '600',
+  },
+  categoryChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  sectionBlock: {
+    gap: 10,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: BRAND_COLORS.textMain,
+  },
+  subField: {
+    gap: 4,
+  },
+  subLabel: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: BRAND_COLORS.textSub,
+  },
+  custodyList: {
+    gap: 8,
+  },
+  custodyCard: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    borderWidth: 1,
+    flexDirection: 'row',
+    padding: 12,
+    gap: 12,
+    alignItems: 'flex-start',
+  },
+  custodyCardActive: {
+    borderColor: BRAND_COLORS.primary,
+    backgroundColor: BRAND_COLORS.primaryLight,
+  },
+  radioDot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: '#94A3B8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  radioDotActive: {
+    borderColor: BRAND_COLORS.primary,
+  },
+  radioDotInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: BRAND_COLORS.primary,
+  },
+  custodyTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  custodyTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  custodyTitleActive: {
+    color: BRAND_COLORS.primary,
+  },
+  custodySubtitle: {
+    fontSize: 11.5,
+    color: BRAND_COLORS.textSub,
+    lineHeight: 16,
+  },
+  labelHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  wordCounter: {
+    fontSize: 11.5,
+    color: '#94A3B8',
+  },
+  submitSection: {
+    gap: 8,
+    marginTop: 10,
+  },
+  submitBtn: {
+    backgroundColor: BRAND_COLORS.primary,
+    borderRadius: 8,
+    height: 46,
+  },
+  honorNotice: {
+    fontSize: 11,
+    color: BRAND_COLORS.textSub,
+    textAlign: 'center',
+  },
 });
