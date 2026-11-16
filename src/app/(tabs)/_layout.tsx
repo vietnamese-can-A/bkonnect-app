@@ -17,7 +17,7 @@ export default function TabsLayout() {
         tabBarHideOnKeyboard: true,
         tabBarLabelStyle: styles.label,
         tabBarStyle: styles.tabBar,
-      }}>
+      }}>đồ
       <Tabs.Screen
         name="index"
         options={{
@@ -28,8 +28,15 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="create"
         options={{
-          title: 'Báo đồ',
+          title: 'Nhặt đồ',
           tabBarIcon: ({ color }) => <TabIcon glyph="＋" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="lost"
+        options={{
+          title: 'Mất đồ',
+          tabBarIcon: ({ color }) => <TabIcon glyph="▤" color={color} />,
         }}
       />
       <Tabs.Screen

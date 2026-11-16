@@ -11,11 +11,11 @@ import {
   View,
 } from 'react-native';
 
+import { getPost } from '@/api/posts';
 import { AppHeader } from '@/components/app-header';
 import { FoundPostCard } from '@/components/found-post-card';
 import { colors, radii, shadows } from '@/constants/theme';
 import { useAppState } from '@/features/app-state/app-state-context';
-import { apiFetch } from '@/services/apiService';
 import type { FoundPost } from '@/types/domain';
 
 const campusOptions = ['Cơ sở 1 (Lý Thường Kiệt)', 'Cơ sở 2 (Dĩ An)'];
@@ -60,7 +60,12 @@ function matchesCampus(postCampus: string, selectedCampus: string) {
 }
 
 export default function HomeScreen() {
-  const { currentUser, matches, lostReports } = useAppState();
+    const {
+    currentUser,
+    matches,
+    lostReports,
+    setFoundPosts,
+  } = useAppState();
   const { width } = useWindowDimensions();
 
   const [campus, setCampus] = useState(campusOptions[0]);
@@ -97,29 +102,26 @@ export default function HomeScreen() {
     }
     setErrorMsg('');
 
-    try {
-      const params = new URLSearchParams();
-      if (campus) params.append('campus', campus);
-      if (building !== 'Tất cả') params.append('building', building);
-      if (category !== 'Tất cả') params.append('category', category);
+      try{
+        const response = await getPost();
 
-      const response = await apiFetch<{ items: FoundPost[] }>(`/items/feed?${params.toString()}`);
-
-      if (response.success && response.data?.items) {
-        setPosts(response.data.items);
-      } else {
+          if (Array.isArray(response?.items)) {
+            setFoundPosts(response.items);
+            setPosts(response.items);
+          }
+      } catch(error){
         setPosts([]);
-        setErrorMsg(response.message || 'Không có dữ liệu.');
+        if (error instanceof Error) {
+        setErrorMsg(error.message);
+        } else {0
+            setErrorMsg("Không có dữ liệu.");
+        }
       }
-    } catch (err) {
-      console.error('Fetch feed error:', err);
-      setPosts([]);
-      setErrorMsg('Không thể kết nối đến máy chủ.');
-    } finally {
+    finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [campus, building, category]);
+  }, []);
 
   useEffect(() => {
     fetchFeedPosts();
@@ -194,7 +196,7 @@ export default function HomeScreen() {
             <Text style={styles.lostCardTitle}>Bạn làm rơi đồ?</Text>
             <Pressable
               accessibilityRole="button"
-              onPress={() => router.push({ pathname: '/(tabs)/create', params: { type: 'LOST' } })}
+              onPress={() => router.push({ pathname: '/(tabs)/lost', params: { type: 'LOST' } })}
               style={({ pressed }) => [styles.reportLostButton, pressed && styles.pressed]}>
               <Text style={styles.reportLostButtonIcon}>＋</Text>
               <Text style={styles.reportLostButtonText}>Báo mất đồ</Text>
