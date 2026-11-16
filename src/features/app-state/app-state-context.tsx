@@ -1,3 +1,4 @@
+
 import { createContext, type PropsWithChildren, useContext, useMemo, useReducer } from 'react';
 
 import { calculateMatch, MATCH_THRESHOLD } from '@/features/matches/calculate-match';
@@ -33,17 +34,18 @@ type AppAction =
   | { type: 'SWITCH_USER'; userId: string }
   | { type: 'ADD_LOST_REPORT'; report: LostReport; matches: Match[] }
   | { type: 'ADD_FOUND_POST'; post: FoundPost; matches: Match[] }
+  | { type: 'SET_FOUND_POSTS'; posts: FoundPost[] }
   | { type: 'MARK_MATCH_READ'; matchId: string }
   | { type: 'DISMISS_MATCH'; matchId: string }
   | { type: 'COMPLETE_MATCH'; matchId: string };
 
 type AppStateContextValue = AppState & {
-  /** Mock login: khớp MSSV hoặc email HCMUT, mật khẩu chỉ cần không rỗng. */
   login: (identifier: string, password: string) => boolean;
   logout: () => void;
   switchUser: (userId: string) => void;
   createLostReport: (input: NewLostReportInput) => CreateResult;
   createFoundPost: (input: NewFoundPostInput) => CreateResult;
+  setFoundPosts: (posts: FoundPost[]) => void;
   markMatchRead: (matchId: string) => void;
   dismissMatch: (matchId: string) => void;
   completeMatch: (matchId: string) => void;
@@ -111,24 +113,43 @@ function appReducer(state: AppState, action: AppAction): AppState {
       const nextUser = state.users.find((user) => user.id === action.userId);
       return nextUser ? { ...state, currentUser: nextUser, isAuthenticated: true } : state;
     }
+
     case 'LOGOUT':
       return { ...state, isAuthenticated: false };
+
     case 'SWITCH_USER': {
       const nextUser = state.users.find((user) => user.id === action.userId);
       return nextUser ? { ...state, currentUser: nextUser } : state;
     }
+
     case 'ADD_LOST_REPORT':
       return {
         ...state,
         lostReports: [action.report, ...state.lostReports],
         matches: [...action.matches, ...state.matches],
       };
+
     case 'ADD_FOUND_POST':
       return {
         ...state,
         foundPosts: [action.post, ...state.foundPosts],
         matches: [...action.matches, ...state.matches],
       };
+
+    case 'SET_FOUND_POSTS': {
+      const newMatches = buildPotentialMatches(
+        state.lostReports,
+        action.posts,
+        state.matches,
+      );
+
+      return {
+        ...state,
+        foundPosts: action.posts,
+        matches: [...newMatches, ...state.matches],
+      };
+    }
+
     case 'MARK_MATCH_READ':
       return {
         ...state,
@@ -136,6 +157,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
           match.id === action.matchId ? { ...match, isRead: true } : match,
         ),
       };
+
     case 'DISMISS_MATCH':
       return {
         ...state,
@@ -145,6 +167,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
             : match,
         ),
       };
+
     case 'COMPLETE_MATCH': {
       const completedMatch = state.matches.find(
         (match) => match.id === action.matchId && match.status === 'POSSIBLE',
@@ -177,6 +200,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
         }),
       };
     }
+
     default:
       return state;
   }
@@ -190,6 +214,7 @@ export function AppStateProvider({ children }: PropsWithChildren) {
   const value = useMemo<AppStateContextValue>(
     () => ({
       ...state,
+
       login: (identifier, password) => {
         const key = identifier.trim().toLowerCase();
         if (!key || !password) return false;
@@ -205,8 +230,11 @@ export function AppStateProvider({ children }: PropsWithChildren) {
         dispatch({ type: 'LOGIN', userId: user.id });
         return true;
       },
+
       logout: () => dispatch({ type: 'LOGOUT' }),
+
       switchUser: (userId) => dispatch({ type: 'SWITCH_USER', userId }),
+
       createLostReport: (input) => {
         const report: LostReport = {
           ...input,
@@ -215,10 +243,13 @@ export function AppStateProvider({ children }: PropsWithChildren) {
           status: 'SEARCHING',
           createdAt: new Date().toISOString(),
         };
+
         const matches = buildPotentialMatches([report], state.foundPosts, state.matches);
         dispatch({ type: 'ADD_LOST_REPORT', report, matches });
+
         return { id: report.id, matchCount: matches.length };
       },
+
       createFoundPost: (input) => {
         const post: FoundPost = {
           ...input,
@@ -227,13 +258,21 @@ export function AppStateProvider({ children }: PropsWithChildren) {
           status: 'OPEN',
           createdAt: new Date().toISOString(),
         };
+
         const matches = buildPotentialMatches(state.lostReports, [post], state.matches);
         dispatch({ type: 'ADD_FOUND_POST', post, matches });
+
         return { id: post.id, matchCount: matches.length };
       },
+
+      setFoundPosts: (posts) => dispatch({ type: 'SET_FOUND_POSTS', posts }),
+
       markMatchRead: (matchId) => dispatch({ type: 'MARK_MATCH_READ', matchId }),
+
       dismissMatch: (matchId) => dispatch({ type: 'DISMISS_MATCH', matchId }),
+
       completeMatch: (matchId) => dispatch({ type: 'COMPLETE_MATCH', matchId }),
+
       getUser: (userId) => state.users.find((user) => user.id === userId),
     }),
     [state],

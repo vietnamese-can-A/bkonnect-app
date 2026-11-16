@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { getActivity } from '@/api/account';
 import { AppHeader } from '@/components/app-header';
 import { FoundPostCard } from '@/components/found-post-card';
 import {
@@ -19,7 +20,6 @@ import {
 } from '@/components/status-badge';
 import { colors, radii, shadows } from '@/constants/theme';
 import { useAppState } from '@/features/app-state/app-state-context';
-import { apiFetch } from '@/services/apiService';
 import type { FoundPost, LostReport, Match } from '@/types/domain';
 import { formatDateTime } from '@/utils/date';
 
@@ -45,20 +45,16 @@ export default function ActivityScreen() {
     }
 
     try {
-      const response = await apiFetch<{
-        lostReports: LostReport[];
-        foundPosts: FoundPost[];
-        matches: Match[];
-      }>('/user/activities');
-
-      if (response.success && response.data) {
-        setLostReports(response.data.lostReports || []);
-        setFoundPosts(response.data.foundPosts || []);
-        setMatches(response.data.matches || []);
-      } else {
+      const response = await getActivity();
+      if (response === undefined) {
         setLostReports([]);
         setFoundPosts([]);
         setMatches([]);
+        return;
+      } else {
+        setLostReports(response.lostReports || []);
+        setFoundPosts(response.foundPosts || []);
+        setMatches(response.matches || []);
       }
     } catch (err) {
       console.error('Fetch activities error:', err);

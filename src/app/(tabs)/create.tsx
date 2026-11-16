@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 
+import { addImageItems, addPost } from '@/api/posts';
 import { AppHeader } from '@/components/app-header';
 import { FormTextInput } from '@/components/form-field';
 import { ImagePickerField } from '@/components/image-picker-field';
@@ -19,7 +20,6 @@ import { PrimaryButton } from '@/components/primary-button';
 import { SelectField } from '@/components/select-field';
 import { radii } from '@/constants/theme';
 import { useAppState } from '@/features/app-state/app-state-context';
-import { apiFetch } from '@/services/apiService';
 
 // BỘ MÃ MÀU CHUẨN HCMUT / BKONNECT
 const BRAND_COLORS = {
@@ -131,27 +131,19 @@ export default function CreateScreen() {
   };
 
   const uploadImageToServer = async (uri: string): Promise<string | null> => {
-    try {
-      const filename = uri.split('/').pop() || 'photo.jpg';
-      const match = /\.(\w+)$/.exec(filename);
-      const type = match ? `image/${match[1]}` : 'image/jpeg';
+    const filename = uri.split('/').pop() || 'photo.jpg';
+    const match = /\.(\w+)$/.exec(filename);
+    const type = match ? `image/${match[1]}` : 'image/jpeg';
 
-      const formData = new FormData();
-      formData.append('file', {
+    const formData = new FormData();
+    formData.append('file', {
         uri,
         name: filename,
         type,
       } as any);
-
-      // Gọi API qua apiFetch đồng bộ toàn dự án
-      const response = await apiFetch<{ imageUrl: string }>('/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (response.success && response.data?.imageUrl) {
-        return response.data.imageUrl;
-      }
+    try {
+      const response = await addImageItems(formData);
+      if(response?.imageUrl) return response.imageUrl;
       return null;
     } catch (err) {
       console.error('Image upload failed:', err);
@@ -211,41 +203,28 @@ export default function CreateScreen() {
         color: 'Nhiều màu',
         foundAt: eventTime,
       };
-
-      const response = await apiFetch('/items', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.success) {
-        setError(response.message || 'Gửi bài đăng thất bại. Vui lòng thử lại.');
-        setIsLoading(false);
-        return;
-      }
-
-      createFoundPost({
-        title: itemName.trim(),
-        category,
-        color: 'Nhiều màu',
-        campus,
-        building: building.trim(),
-        specificLocation: specificLocation.trim(),
-        foundAt: eventTime,
-        custody: custody.trim(),
-        description: description.trim(),
-        imageUri: uploadedServerImageUrl || imageUri,
-      });
-
-      resetForm();
-      router.navigate('/(tabs)');
-    } catch (err) {
+      await addPost(payload);
+          createFoundPost({
+          title: itemName.trim(),
+          category,
+          color: 'Nhiều màu',
+          campus,
+          building: building.trim(),
+          specificLocation: specificLocation.trim(),
+          foundAt: eventTime,
+          custody: custody.trim(),
+          description: description.trim(),
+          imageUri: uploadedServerImageUrl || imageUri,
+        });
+        resetForm();
+        router.navigate('/(tabs)');
+      } catch (err) {
       console.error('Create item submit error:', err);
       setError('Đã xảy ra lỗi hệ thống khi đăng bài. Vui lòng thử lại sau.');
     } finally {
       setIsLoading(false);
     }
   };
-
   return (
     <View style={styles.screen}>
       <AppHeader title="Báo nhặt được đồ" subtitle="BKonnect HCMUT" />
